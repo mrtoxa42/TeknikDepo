@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0284c7" />
+      <stop offset="100%" stop-color="#0369a1" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="110" fill="url(#grad)" />
+  <g fill="none" stroke="#ffffff" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" transform="translate(96, 96)">
+    <!-- Warehouse Box / Package with Gear -->
+    <path d="M160 30 L290 95 L290 225 L160 290 L30 225 L30 95 Z" />
+    <path d="M160 30 L160 290" />
+    <path d="M30 95 L160 160 L290 95" />
+    <circle cx="160" cy="160" r="42" fill="#0284c7" stroke="#ffffff" stroke-width="20" />
+    <path d="M160 142 L160 178" stroke="#38bdf8" stroke-width="12" />
+    <path d="M142 160 L178 160" stroke="#38bdf8" stroke-width="12" />
+  </g>
+</svg>

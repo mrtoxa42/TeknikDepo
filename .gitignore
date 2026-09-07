@@ -1,0 +1,8 @@
+node_modules
+client/node_modules
+client/dist
+teknik_depo.db
+teknik_depo.db-shm
+teknik_depo.db-wal
+.DS_Store
+*.log
