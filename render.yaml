@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: teknikdepo
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: PORT
+        value: 3000
