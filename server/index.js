@@ -27,6 +27,16 @@ app.get('/api/cards', (req, res) => {
   }
 });
 
+app.post('/api/cards/sync', (req, res) => {
+  try {
+    const cards = db.syncFromClient(req.body.cards);
+    io.emit('cards_updated', cards);
+    res.json(cards);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.post('/api/cards', (req, res) => {
   try {
     const card = db.createCard(req.body);

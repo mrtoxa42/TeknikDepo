@@ -5,7 +5,7 @@ import { socket } from './socket';
 import { requestNotificationPermission, sendBrowserNotification } from './utils/notifications';
 import { 
   Plus, Pin, CheckSquare, Clock, CheckCircle2, 
-  Bell, BellRing, User, LayoutGrid, Search, Trash2, ArrowRight
+  Bell, BellRing, User, LayoutGrid, Search, Trash2, ArrowRight, Maximize2, X
 } from 'lucide-react';
 
 export default function App() {
@@ -13,7 +13,16 @@ export default function App() {
     return localStorage.getItem('depo_user') || 'Erkan';
   });
 
-  const [cards, setCards] = useState([]);
+  // Client-side offline-first cache
+  const [cards, setCards] = useState(() => {
+    try {
+      const cached = localStorage.getItem('cached_cards');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+
   const [activeCol, setActiveCol] = useState('all'); // 'all', 'notes', 'todo', 'doing', 'done'
   const [search, setSearch] = useState('');
   const [isConnected, setIsConnected] = useState(socket.connected);
@@ -25,6 +34,7 @@ export default function App() {
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
   const [newModalDefaultCol, setNewModalDefaultCol] = useState('notes');
   const [selectedCardForEdit, setSelectedCardForEdit] = useState(null);
+  const [previewImage, setPreviewImage] = useState(null);
   const [toast, setToast] = useState(null);
 
   const showToast = (msg) => {
@@ -48,16 +58,33 @@ export default function App() {
     purple: 'border-l-purple-500 text-purple-300'
   };
 
-  // Fetch cards
+  // Fetch cards and sync with local cache
   const fetchCards = async () => {
     try {
       const res = await fetch('/api/cards');
       if (res.ok) {
         const data = await res.json();
-        setCards(data);
+        if (Array.isArray(data) && data.length > 0) {
+          setCards(data);
+          localStorage.setItem('cached_cards', JSON.stringify(data));
+        } else {
+          // If server was reset but client has cached cards, restore them to server!
+          const cached = localStorage.getItem('cached_cards');
+          if (cached) {
+            const localCards = JSON.parse(cached);
+            if (localCards.length > 0) {
+              setCards(localCards);
+              fetch('/api/cards/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cards: localCards })
+              });
+            }
+          }
+        }
       }
     } catch (e) {
-      console.error(e);
+      console.warn('Sunucuya ulaşılamadı, yerel hafızadaki notlar gösteriliyor:', e);
     }
   };
 
@@ -72,18 +99,19 @@ export default function App() {
     }
     function onCardsUpdated(updatedCards) {
       setCards(updatedCards);
+      localStorage.setItem('cached_cards', JSON.stringify(updatedCards));
     }
     function onCardCreated({ card, by }) {
       if (by !== currentUser) {
-        const title = `📌 Yeni Not / Kart (${by})`;
+        const title = `📌 Yeni Not (${by})`;
         sendBrowserNotification(title, card.title);
         showToast(`${title}: ${card.title}`);
       }
     }
     function onCardMoved({ card, by, to }) {
       if (by !== currentUser) {
-        const colNames = { notes: 'Depo Notları', todo: 'Yapılacak', doing: 'İşlemde', done: 'Bitti' };
-        const title = `🔄 Kart Taşındı (${by})`;
+        const colNames = { notes: 'Uzun Vadeli Notlar', todo: 'Yapılacak', doing: 'İşlemde', done: 'Bitti' };
+        const title = `🔄 Kart Güncellendi (${by})`;
         const body = `"${card.title}" -> ${colNames[to] || to}`;
         sendBrowserNotification(title, body);
         showToast(`${title}: ${body}`);
@@ -115,7 +143,7 @@ export default function App() {
     const res = await requestNotificationPermission();
     setNotificationPermission(res);
     if (res === 'granted') {
-      sendBrowserNotification('Bildirimler Aktif!', 'Yeni notlar ve güncellemeler anında telefonunuza gelecek.');
+      sendBrowserNotification('Bildirimler Aktif!', 'Yeni notlar ve işler anında telefonunuza gelecek.');
       showToast('Bildirimler başarıyla açıldı!');
     } else {
       showToast('Bildirim izni verilmedi.');
@@ -125,11 +153,19 @@ export default function App() {
   // API Actions
   const handleAddCard = async (data) => {
     try {
-      await fetch('/api/cards', {
+      const res = await fetch('/api/cards', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
       });
+      if (res.ok) {
+        const newCard = await res.json();
+        setCards((prev) => {
+          const updated = [newCard, ...prev];
+          localStorage.setItem('cached_cards', JSON.stringify(updated));
+          return updated;
+        });
+      }
     } catch (e) {
       console.error(e);
     }
@@ -167,13 +203,12 @@ export default function App() {
     }
   };
 
-  // Column counts
+  // Columns data
   const notesCards = cards.filter((c) => c.board_col === 'notes');
   const todoCards = cards.filter((c) => c.board_col === 'todo');
   const doingCards = cards.filter((c) => c.board_col === 'doing');
   const doneCards = cards.filter((c) => c.board_col === 'done');
 
-  // Filtered by search
   const filterList = (list) => {
     if (!search.trim()) return list;
     const q = search.toLowerCase();
@@ -183,7 +218,8 @@ export default function App() {
   const columns = [
     {
       id: 'notes',
-      title: 'Depo Notları & Hatırlatma',
+      title: 'Uzun Vadeli & Sabit Notlar',
+      sub: 'O gün halledilmeyecek, depoda sürekli kalacak notlar',
       icon: Pin,
       colorText: 'text-amber-400',
       badgeBg: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
@@ -192,6 +228,7 @@ export default function App() {
     {
       id: 'todo',
       title: 'Yapılacaklar',
+      sub: 'Günlük & haftalık yapılacak işler',
       icon: CheckSquare,
       colorText: 'text-sky-400',
       badgeBg: 'bg-sky-500/20 text-sky-300 border-sky-500/40',
@@ -200,6 +237,7 @@ export default function App() {
     {
       id: 'doing',
       title: 'İşlemde / Yapılıyor',
+      sub: 'Şu an ilgilenilenler',
       icon: Clock,
       colorText: 'text-purple-400',
       badgeBg: 'bg-purple-500/20 text-purple-300 border-purple-500/40',
@@ -208,6 +246,7 @@ export default function App() {
     {
       id: 'done',
       title: 'Tamamlananlar',
+      sub: 'Biten işler',
       icon: CheckCircle2,
       colorText: 'text-emerald-400',
       badgeBg: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
@@ -217,7 +256,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-sky-500 selection:text-white">
-      {/* Toast */}
+      {/* In-app Toast Banner */}
       {toast && (
         <div className="fixed top-3 left-1/2 -translate-x-1/2 z-50 bg-slate-800 border border-sky-500/60 text-white px-4 py-2 rounded-2xl shadow-2xl flex items-center gap-2 text-xs animate-bounce">
           <Bell className="w-3.5 h-3.5 text-sky-400 shrink-0" />
@@ -296,7 +335,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* SUB-HEADER: COLUMN FILTER TABS & SEARCH */}
+      {/* SUB-HEADER: SÜTUN SEÇİMİ (MOBİL KOLAYLIK) */}
       <div className="bg-slate-900/60 border-b border-slate-800 px-3 py-2 sticky top-[87px] z-30 backdrop-blur">
         <div className="max-w-5xl mx-auto flex items-center gap-1.5 overflow-x-auto scrollbar-none">
           <button
@@ -320,7 +359,7 @@ export default function App() {
             }`}
           >
             <Pin className="w-3.5 h-3.5 text-amber-400" />
-            Depo Notları ({notesCards.length})
+            Kalıcı Notlar ({notesCards.length})
           </button>
 
           <button
@@ -361,23 +400,25 @@ export default function App() {
         </div>
       </div>
 
-      {/* MAIN BOARD CONTENT */}
+      {/* MAIN PANO CONTENT */}
       <main className="flex-1 max-w-5xl w-full mx-auto p-3 sm:p-4">
-        {/* Render columns based on selection */}
         {activeCol === 'all' ? (
-          // ALL COLUMNS (TRELLO GRID)
+          // GRID VIEW (ALL COLUMNS)
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3.5">
             {columns.map((col) => (
               <div key={col.id} className="bg-slate-900/60 rounded-2xl border border-slate-800/80 p-3 flex flex-col h-fit">
                 {/* Column Header */}
-                <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-800">
-                  <div className="flex items-center gap-1.5">
-                    <col.icon className={`w-4 h-4 ${col.colorText}`} />
-                    <span className="text-xs font-bold text-white">{col.title}</span>
+                <div className="mb-3 pb-2 border-b border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <col.icon className={`w-4 h-4 ${col.colorText}`} />
+                      <span className="text-xs font-bold text-white">{col.title}</span>
+                    </div>
+                    <span className={`text-[11px] font-bold px-2 py-0.2 rounded-full border ${col.badgeBg}`}>
+                      {col.cards.length}
+                    </span>
                   </div>
-                  <span className={`text-[11px] font-bold px-2 py-0.2 rounded-full border ${col.badgeBg}`}>
-                    {col.cards.length}
-                  </span>
+                  <p className="text-[10px] text-slate-400 mt-1">{col.sub}</p>
                 </div>
 
                 {/* Cards */}
@@ -394,26 +435,29 @@ export default function App() {
             ))}
           </div>
         ) : (
-          // SINGLE COLUMN FULL LIST
+          // SINGLE COLUMN FULL VIEW
           <div>
             {columns
               .filter((col) => col.id === activeCol)
               .map((col) => (
                 <div key={col.id} className="space-y-3">
-                  <div className="flex items-center justify-between pb-1">
-                    <div className="flex items-center gap-2">
-                      <col.icon className={`w-5 h-5 ${col.colorText}`} />
-                      <h2 className="text-sm font-bold text-white">{col.title}</h2>
+                  <div className="pb-1">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <col.icon className={`w-5 h-5 ${col.colorText}`} />
+                        <h2 className="text-sm font-bold text-white">{col.title}</h2>
+                      </div>
+                      <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full border ${col.badgeBg}`}>
+                        {col.cards.length} kayıt
+                      </span>
                     </div>
-                    <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full border ${col.badgeBg}`}>
-                      {col.cards.length} kayıt
-                    </span>
+                    <p className="text-xs text-slate-400 mt-0.5">{col.sub}</p>
                   </div>
 
                   <div className="space-y-2.5">
                     {col.cards.length === 0 ? (
                       <div className="p-8 text-center bg-slate-900/40 rounded-2xl border border-slate-800 text-slate-500 text-xs">
-                        Bu bölümde henüz kart bulunmuyor.
+                        Bu bölümde henüz kayıt bulunmuyor.
                       </div>
                     ) : (
                       col.cards.map((card) => renderCard(card))
@@ -425,7 +469,7 @@ export default function App() {
         )}
       </main>
 
-      {/* RENDER A SINGLE CARD HELPER */}
+      {/* RENDER A SINGLE CARD */}
       {function renderCard(card) {
         const borderClass = cardBorderColors[card.color] || cardBorderColors.amber;
         const isDone = card.board_col === 'done';
@@ -441,11 +485,27 @@ export default function App() {
               {card.title}
             </div>
 
-            {/* Content Note */}
+            {/* Note text */}
             {card.content && (
               <p className="text-[11px] text-slate-300 mt-1.5 whitespace-pre-wrap leading-relaxed bg-slate-950/60 p-2 rounded-lg border border-slate-800/60">
                 {card.content}
               </p>
+            )}
+
+            {/* Photo Thumbnail if exists */}
+            {card.image && (
+              <div 
+                className="mt-2 relative rounded-lg overflow-hidden border border-slate-700/80 max-h-32 bg-black flex items-center justify-center cursor-pointer group"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setPreviewImage(card.image);
+                }}
+              >
+                <img src={card.image} alt="Ekli fotoğraf" className="max-h-32 object-contain" />
+                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-white text-xs gap-1 font-semibold">
+                  <Maximize2 className="w-3.5 h-3.5" /> Büyüt
+                </div>
+              </div>
             )}
 
             {/* Card Footer: Author + Quick Move Buttons */}
@@ -463,7 +523,7 @@ export default function App() {
                   <button
                     onClick={() => handleMoveCard(card.id, 'todo')}
                     className="px-2 py-0.5 rounded bg-sky-950 text-sky-400 border border-sky-800/60 hover:bg-sky-900 font-semibold"
-                    title="Yapılacaklar listesine aktar"
+                    title="Yapılacaklar listesine al"
                   >
                     → Yapılacak
                   </button>
@@ -483,7 +543,7 @@ export default function App() {
                   <button
                     onClick={() => handleMoveCard(card.id, 'done')}
                     className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800/60 hover:bg-emerald-900 font-semibold"
-                    title="Tamamlandı olarak işaretle"
+                    title="Bitti olarak işaretle"
                   >
                     ✓ Bitti
                   </button>
@@ -491,11 +551,11 @@ export default function App() {
 
                 {card.board_col === 'done' && (
                   <button
-                    onClick={() => handleMoveCard(card.id, 'todo')}
-                    className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 font-medium"
-                    title="Tekrar Yapılacaklar listesine al"
+                    onClick={() => handleMoveCard(card.id, 'notes')}
+                    className="px-2 py-0.5 rounded bg-amber-950 text-amber-400 border border-amber-800/60 hover:bg-amber-900 font-semibold"
+                    title="Tekrar Kalıcı Notlara al"
                   >
-                    ↩ Geri Al
+                    ↩ Kalıcı Not
                   </button>
                 )}
               </div>
@@ -504,7 +564,23 @@ export default function App() {
         );
       }}
 
-      {/* MODALS */}
+      {/* FULLSCREEN PHOTO PREVIEW MODAL */}
+      {previewImage && (
+        <div 
+          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4"
+          onClick={() => setPreviewImage(null)}
+        >
+          <button
+            onClick={() => setPreviewImage(null)}
+            className="absolute top-4 right-4 p-2 bg-slate-800/80 text-white rounded-full hover:bg-slate-700"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          <img src={previewImage} alt="Büyük görsel" className="max-h-[85vh] max-w-full rounded-xl object-contain shadow-2xl" />
+        </div>
+      )}
+
+      {/* NEW CARD MODAL */}
       <NewCardModal
         isOpen={isNewModalOpen}
         onClose={() => setIsNewModalOpen(false)}
@@ -513,6 +589,7 @@ export default function App() {
         initialCol={newModalDefaultCol}
       />
 
+      {/* EDIT CARD MODAL */}
       <EditCardModal
         card={selectedCardForEdit}
         isOpen={Boolean(selectedCardForEdit)}
